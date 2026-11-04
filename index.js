@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import "dotenv/config";
 
 const app = express();
@@ -107,6 +107,99 @@ app.post("/add-book", async (req, res) => {
     });
   }
 });
+
+app.get("/books", async (req, res) => {
+  try {
+    const result = await booksCollection.find().toArray();
+    res.send(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Failed to fetch books" });
+  }
+});
+
+app.get("/my-books", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (typeof email !== "string" || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const books = await booksCollection
+      .find({ userEmail: email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json({
+      success: true,
+      books,
+    });
+  } catch (error) {
+    console.error("Error fetching books:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch books",
+    });
+  }
+});
+
+// app.patch("/my-books/:id", async (req, res) => {
+//   const { id } = req.params;
+//   const upadatedData = req.body;
+//   const result = await booksCollection.updateOne(
+//     {
+//       _id: new ObjectId(id),
+//     },
+//     {
+//       $set: upadatedData,
+//     },
+//   );
+//   res.json(result);
+// });
+app.patch("/my-books/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updatedData = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid book ID",
+      });
+    }
+
+    const result = await booksCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Book not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Book updated successfully",
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to update book",
+    });
+  }
+});
+
+
 
 app.listen(PORT, () => {
   console.log(`BookNook server listening on port ${PORT}`);
