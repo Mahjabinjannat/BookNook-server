@@ -199,7 +199,11 @@ app.patch("/my-books/:id", async (req, res) => {
   }
 });
 
-
+app.delete("/my-books/:id", async (req, res) => {
+  const { id } = req.params;
+  const result = await booksCollection.deleteOne({ _id: new ObjectId(id) });
+  res.send(result);
+});
 
 app.listen(PORT, () => {
   console.log(`BookNook server listening on port ${PORT}`);
