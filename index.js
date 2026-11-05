@@ -29,6 +29,7 @@ export async function connectToMongoDB() {
 const mongoClient = await connectToMongoDB();
 const db = mongoClient.db("bookNook");
 const booksCollection = db.collection("books");
+const borrowsCollection = db.collection("borrows");
 
 // ADD BOOK API
 app.post("/add-book", async (req, res) => {
@@ -118,6 +119,12 @@ app.get("/books", async (req, res) => {
   }
 });
 
+app.get("/books/:id", async (req, res) => {
+  const { id } = req.params;
+  const result = await booksCollection.findOne({ _id: new ObjectId(id) });
+  res.send(result);
+});
+
 app.get("/my-books", async (req, res) => {
   try {
     const email = req.query.email;
@@ -204,6 +211,8 @@ app.delete("/my-books/:id", async (req, res) => {
   const result = await booksCollection.deleteOne({ _id: new ObjectId(id) });
   res.send(result);
 });
+
+
 
 app.listen(PORT, () => {
   console.log(`BookNook server listening on port ${PORT}`);
