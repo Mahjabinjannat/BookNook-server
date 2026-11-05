@@ -119,6 +119,25 @@ app.get("/books", async (req, res) => {
   }
 });
 
+app.get("/books/new-arrivals", async (req, res) => {
+  try {
+    const books = await booksCollection
+      .find()
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(6)
+      .toArray();
+
+    res.json(books);
+  } catch (error) {
+    console.error("Error fetching new arrivals:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch new arrivals",
+    });
+  }
+});
+
 app.get("/books/:id", async (req, res) => {
   const { id } = req.params;
   const result = await booksCollection.findOne({ _id: new ObjectId(id) });
@@ -493,7 +512,6 @@ app.patch("/borrows/:id/return", async (req, res) => {
     });
   }
 });
-
 
 app.listen(PORT, () => {
   console.log(`BookNook server listening on port ${PORT}`);
