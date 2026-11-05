@@ -311,6 +311,45 @@ app.post("/borrows", async (req, res) => {
   }
 });
 
+// ====================================
+// CHECK IF USER ALREADY BORROWED BOOK
+// ====================================
+
+app.get("/borrows/check", async (req, res) => {
+  try {
+    const { bookId, email } = req.query;
+
+    if (
+      typeof bookId !== "string" ||
+      !ObjectId.isValid(bookId) ||
+      typeof email !== "string" ||
+      !email.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid book ID and email are required",
+      });
+    }
+
+    const existingBorrow = await borrowsCollection.findOne({
+      bookId: new ObjectId(bookId),
+      userEmail: email.trim().toLowerCase(),
+      status: "borrowed",
+    });
+
+    res.json({
+      success: true,
+      alreadyBorrowed: !!existingBorrow,
+    });
+  } catch (error) {
+    console.error("Error checking borrowing status:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to check borrowing status",
+    });
+  }
+});
 
 
 app.listen(PORT, () => {
