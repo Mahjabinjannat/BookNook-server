@@ -422,6 +422,77 @@ app.get("/my-borrows", async (req, res) => {
   }
 });
 
+// ====================================
+// RETURN A BORROWED BOOK
+// ====================================
+
+app.patch("/borrows/:id/return", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid borrow ID",
+      });
+    }
+
+    const borrowId = new ObjectId(id);
+
+    const borrow = await borrowsCollection.findOne({
+      _id: borrowId,
+      status: "borrowed",
+    });
+
+    if (!borrow) {
+      return res.status(404).json({
+        success: false,
+        message: "Active borrowing record not found",
+      });
+    }
+
+    // Mark the book as returned
+    const result = await borrowsCollection.updateOne(
+      {
+        _id: borrowId,
+        status: "borrowed",
+      },
+      {
+        $set: {
+          status: "returned",
+          returnedAt: new Date(),
+        },
+      },
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(409).json({
+        success: false,
+        message: "Book has already been returned",
+      });
+    }
+
+    // Increase available copies
+    await booksCollection.updateOne(
+      { _id: borrow.bookId },
+      {
+        $inc: { totalCopies: 1 },
+      },
+    );
+
+    res.json({
+      success: true,
+      message: "Book returned successfully",
+    });
+  } catch (error) {
+    console.error("Error returning book:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to return book",
+    });
+  }
+});
 
 
 app.listen(PORT, () => {
