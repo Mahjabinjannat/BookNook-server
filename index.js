@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
 import "dotenv/config";
+import { verifyJWT } from "./middleware/verifyJWT.js";
 
 const app = express();
 const PORT = 8000;
@@ -32,20 +33,14 @@ const booksCollection = db.collection("books");
 const borrowsCollection = db.collection("borrows");
 
 // ADD BOOK API
-app.post("/add-book", async (req, res) => {
+app.post("/add-book", verifyJWT, async (req, res) => {
   try {
-    const {
-      title,
-      author,
-      category,
-      totalCopies,
-      image,
-      description,
-      userName,
-      userEmail,
-    } = req.body;
+    const { title, author, category, totalCopies, image, description } =
+      req.body;
 
-    // VALIDATE REQUIRED FIELDS
+    const userEmail = req.user.email;
+    const userName = req.user.name;
+
     if (
       typeof title !== "string" ||
       !title.trim() ||
@@ -55,11 +50,7 @@ app.post("/add-book", async (req, res) => {
       typeof image !== "string" ||
       !/^https?:\/\//.test(image) ||
       typeof description !== "string" ||
-      !description.trim() ||
-      typeof userName !== "string" ||
-      !userName.trim() ||
-      typeof userEmail !== "string" ||
-      !userEmail.trim()
+      !description.trim()
     ) {
       return res.status(400).json({
         success: false,
@@ -67,15 +58,13 @@ app.post("/add-book", async (req, res) => {
       });
     }
 
-    // VALIDATE TOTAL COPIES
     if (!Number.isInteger(totalCopies) || totalCopies < 1) {
       return res.status(400).json({
         success: false,
-        message: "Total copies is required and must be a positive whole number",
+        message: "Total copies must be a positive whole number",
       });
     }
 
-    // PREPARE BOOK DATA
     const newBook = {
       title: title.trim(),
       author: author.trim(),
@@ -83,18 +72,14 @@ app.post("/add-book", async (req, res) => {
       totalCopies,
       image,
       description: description.trim(),
-      userName: userName.trim(),
-      userEmail: userEmail.trim(),
+      userName,
+      userEmail,
       createdAt: new Date(),
     };
 
-    // INSERT INTO MONGODB
     const result = await booksCollection.insertOne(newBook);
 
-    console.log("Book inserted:", result.insertedId);
-
-    // SEND SUCCESS RESPONSE
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Book added successfully",
       insertedId: result.insertedId,
@@ -102,7 +87,7 @@ app.post("/add-book", async (req, res) => {
   } catch (error) {
     console.error("Error adding book:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to add book",
     });
@@ -138,36 +123,29 @@ app.get("/books/new-arrivals", async (req, res) => {
   }
 });
 
-app.get("/books/:id", async (req, res) => {
+app.get("/books/:id", verifyJWT, async (req, res) => {
   const { id } = req.params;
   const result = await booksCollection.findOne({ _id: new ObjectId(id) });
   res.send(result);
 });
 
-app.get("/my-books", async (req, res) => {
+app.get("/my-books", verifyJWT, async (req, res) => {
   try {
-    const email = req.query.email;
-
-    if (typeof email !== "string" || !email.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required",
-      });
-    }
+    const email = req.user.email;
 
     const books = await booksCollection
       .find({ userEmail: email })
       .sort({ createdAt: -1 })
       .toArray();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       books,
     });
   } catch (error) {
     console.error("Error fetching books:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch books",
     });
@@ -187,10 +165,9 @@ app.get("/my-books", async (req, res) => {
 //   );
 //   res.json(result);
 // });
-app.patch("/my-books/:id", async (req, res) => {
+app.patch("/my-books/:id", verifyJWT, async (req, res) => {
   try {
     const { id } = req.params;
-    const updatedData = req.body;
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -199,66 +176,180 @@ app.patch("/my-books/:id", async (req, res) => {
       });
     }
 
+    const allowedFields = [
+      "title",
+      "author",
+      "category",
+      "totalCopies",
+      "description",
+    ];
+
+    const updatedData = {};
+
+    for (const field of allowedFields) {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        updatedData[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updatedData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields provided",
+      });
+    }
+
+    for (const field of ["title", "author", "description"]) {
+      if (field in updatedData) {
+        if (
+          typeof updatedData[field] !== "string" ||
+          !updatedData[field].trim()
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid ${field}`,
+          });
+        }
+
+        updatedData[field] = updatedData[field].trim();
+      }
+    }
+
+    if (
+      "category" in updatedData &&
+      !["Fiction", "Science", "History", "Kids", "Others"].includes(
+        updatedData.category,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid category",
+      });
+    }
+
+    if (
+      "totalCopies" in updatedData &&
+      (!Number.isInteger(updatedData.totalCopies) ||
+        updatedData.totalCopies < 1)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Total copies must be a positive whole number",
+      });
+    }
+
     const result = await booksCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updatedData },
+      {
+        _id: new ObjectId(id),
+        userEmail: req.user.email,
+      },
+      {
+        $set: updatedData,
+      },
     );
 
     if (result.matchedCount === 0) {
       return res.status(404).json({
         success: false,
-        message: "Book not found",
+        message: "Book not found or access denied",
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: "Book updated successfully",
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error updating book:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to update book",
     });
   }
 });
 
-app.delete("/my-books/:id", async (req, res) => {
-  const { id } = req.params;
-  const result = await booksCollection.deleteOne({ _id: new ObjectId(id) });
-  res.send(result);
-});
-
-// ====================================
-// BORROW BOOK API
-// ====================================
-
-app.post("/borrows", async (req, res) => {
+app.delete("/my-books/:id", verifyJWT, async (req, res) => {
   try {
-    const { bookId, userName, userEmail } = req.body;
+    const { id } = req.params;
 
-    if (
-      !ObjectId.isValid(bookId) ||
-      typeof userName !== "string" ||
-      !userName.trim() ||
-      typeof userEmail !== "string" ||
-      !userEmail.trim()
-    ) {
+    if (!ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid borrowing information",
+        message: "Invalid book ID",
       });
     }
 
-    const email = userEmail.trim().toLowerCase();
+    const result = await booksCollection.deleteOne({
+      _id: new ObjectId(id),
+      userEmail: req.user.email,
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Book not found or access denied",
+      });
+    }
+
+    return res.json({
+      success: true,
+      deletedCount: result.deletedCount,
+      message: "Book deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting book:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete book",
+    });
+  }
+});
+
+/* ============================================
+   BORROW SYSTEM
+============================================ */
+
+// POST /borrows
+// Borrow a book
+app.post("/borrows", verifyJWT, async (req, res) => {
+  try {
+    const { bookId } = req.body;
+
+    const userEmail = req.user.email;
+    const userName = req.user.name;
+
+    if (!bookId || typeof bookId !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Book ID is required",
+      });
+    }
+
+    if (!ObjectId.isValid(bookId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid book ID",
+      });
+    }
+
     const bookObjectId = new ObjectId(bookId);
 
-    // Check whether the user already borrowed this book
+    const book = await booksCollection.findOne({
+      _id: bookObjectId,
+    });
+
+    if (!book) {
+      return res.status(404).json({
+        success: false,
+        message: "Book not found",
+      });
+    }
+
     const existingBorrow = await borrowsCollection.findOne({
       bookId: bookObjectId,
-      userEmail: email,
+      userEmail,
       status: "borrowed",
     });
 
@@ -269,7 +360,6 @@ app.post("/borrows", async (req, res) => {
       });
     }
 
-    // Decrease copies only if at least one copy is available
     const updateResult = await booksCollection.updateOne(
       {
         _id: bookObjectId,
@@ -283,113 +373,105 @@ app.post("/borrows", async (req, res) => {
     if (updateResult.modifiedCount === 0) {
       return res.status(400).json({
         success: false,
-        message: "Book not found or no copies available",
+        message: "This book is not available",
       });
     }
 
-    // Borrow date and return date
     const borrowDate = new Date();
-
     const returnDate = new Date(borrowDate);
-    returnDate.setUTCDate(returnDate.getUTCDate() + 7);
+    returnDate.setDate(returnDate.getDate() + 7);
 
-    const newBorrow = {
+    const borrowData = {
       bookId: bookObjectId,
-      userName: userName.trim(),
-      userEmail: email,
+      bookTitle: book.title,
+      bookImage: book.image || "",
+      userName,
+      userEmail,
       borrowDate,
       returnDate,
       status: "borrowed",
     };
 
-    // Save borrowing information
     try {
-      const result = await borrowsCollection.insertOne(newBorrow);
+      const result = await borrowsCollection.insertOne(borrowData);
 
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         message: "Book borrowed successfully",
         insertedId: result.insertedId,
       });
-    } catch (error) {
-      // Restore the copy if saving the borrow fails
+    } catch (insertError) {
       await booksCollection.updateOne(
         { _id: bookObjectId },
         { $inc: { totalCopies: 1 } },
       );
 
-      throw error;
+      throw insertError;
     }
   } catch (error) {
-    console.error("Error borrowing book:", error);
+    console.error("Borrow error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to borrow book",
     });
   }
 });
+/* ============================================
+   CHECK BORROW STATUS
+============================================ */
 
-// ====================================
-// CHECK IF USER ALREADY BORROWED BOOK
-// ====================================
-
-app.get("/borrows/check", async (req, res) => {
+// GET /borrows/check?bookId=...&email=...
+app.get("/borrows/check", verifyJWT, async (req, res) => {
   try {
-    const { bookId, email } = req.query;
+    const { bookId } = req.query;
+
+    const userEmail = req.user.email;
 
     if (
       typeof bookId !== "string" ||
-      !ObjectId.isValid(bookId) ||
-      typeof email !== "string" ||
-      !email.trim()
+      !ObjectId.isValid(bookId)
     ) {
       return res.status(400).json({
         success: false,
-        message: "Valid book ID and email are required",
+        message: "Valid book ID is required",
       });
     }
 
     const existingBorrow = await borrowsCollection.findOne({
       bookId: new ObjectId(bookId),
-      userEmail: email.trim().toLowerCase(),
+      userEmail,
       status: "borrowed",
     });
 
-    res.json({
+    return res.json({
       success: true,
-      alreadyBorrowed: !!existingBorrow,
+      alreadyBorrowed: Boolean(existingBorrow),
     });
   } catch (error) {
-    console.error("Error checking borrowing status:", error);
+    console.error("Borrow check error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to check borrowing status",
+      message: "Failed to check borrow status",
     });
   }
 });
 
-// ====================================
-// GET MY BORROWED BOOKS
-// ====================================
+/* ============================================
+   GET MY BORROWED BOOKS
+============================================ */
 
-app.get("/my-borrows", async (req, res) => {
+// GET /borrows?email=...
+app.get("/borrows", verifyJWT, async (req, res) => {
   try {
-    const { email } = req.query;
-
-    if (typeof email !== "string" || !email.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required",
-      });
-    }
+    const userEmail = req.user.email;
 
     const borrows = await borrowsCollection
       .aggregate([
         {
           $match: {
-            userEmail: email.trim().toLowerCase(),
+            userEmail,
             status: "borrowed",
           },
         },
@@ -409,9 +491,15 @@ app.get("/my-borrows", async (req, res) => {
         },
         {
           $addFields: {
-            title: "$book.title",
-            image: "$book.image",
-            author: "$book.author",
+            title: {
+              $ifNull: ["$bookTitle", "$book.title"],
+            },
+            image: {
+              $ifNull: ["$bookImage", "$book.image"],
+            },
+            author: {
+              $ifNull: ["$book.author", ""],
+            },
           },
         },
         {
@@ -427,27 +515,30 @@ app.get("/my-borrows", async (req, res) => {
       ])
       .toArray();
 
-    res.json({
+    return res.json({
       success: true,
       borrows,
     });
   } catch (error) {
-    console.error("Error fetching borrowed books:", error);
+    console.error("Get borrows error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch borrowed books",
     });
   }
 });
 
-// ====================================
-// RETURN A BORROWED BOOK
-// ====================================
+/* ============================================
+   RETURN BORROWED BOOK
+============================================ */
 
-app.patch("/borrows/:id/return", async (req, res) => {
+// DELETE /borrows/:id
+app.delete("/borrows/:id", verifyJWT, async (req, res) => {
   try {
     const { id } = req.params;
+
+    const userEmail = req.user.email;
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -458,22 +549,25 @@ app.patch("/borrows/:id/return", async (req, res) => {
 
     const borrowId = new ObjectId(id);
 
+    // Find only the authenticated user's active borrow
     const borrow = await borrowsCollection.findOne({
       _id: borrowId,
+      userEmail,
       status: "borrowed",
     });
 
     if (!borrow) {
       return res.status(404).json({
         success: false,
-        message: "Active borrowing record not found",
+        message: "Active borrow record not found or access denied",
       });
     }
 
-    // Mark the book as returned
-    const result = await borrowsCollection.updateOne(
+    // Conditionally mark this user's borrow as returned
+    const updateResult = await borrowsCollection.updateOne(
       {
         _id: borrowId,
+        userEmail,
         status: "borrowed",
       },
       {
@@ -484,29 +578,33 @@ app.patch("/borrows/:id/return", async (req, res) => {
       },
     );
 
-    if (result.modifiedCount === 0) {
+    if (updateResult.modifiedCount === 0) {
       return res.status(409).json({
         success: false,
         message: "Book has already been returned",
       });
     }
 
-    // Increase available copies
-    await booksCollection.updateOne(
-      { _id: borrow.bookId },
+    // Restore the available copy
+    const bookUpdateResult = await booksCollection.updateOne(
       {
-        $inc: { totalCopies: 1 },
+        _id: borrow.bookId,
+      },
+      {
+        $inc: {
+          totalCopies: 1,
+        },
       },
     );
 
-    res.json({
+    return res.json({
       success: true,
       message: "Book returned successfully",
     });
   } catch (error) {
-    console.error("Error returning book:", error);
+    console.error("Return book error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to return book",
     });
