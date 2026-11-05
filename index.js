@@ -351,6 +351,78 @@ app.get("/borrows/check", async (req, res) => {
   }
 });
 
+// ====================================
+// GET MY BORROWED BOOKS
+// ====================================
+
+app.get("/my-borrows", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (typeof email !== "string" || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const borrows = await borrowsCollection
+      .aggregate([
+        {
+          $match: {
+            userEmail: email.trim().toLowerCase(),
+            status: "borrowed",
+          },
+        },
+        {
+          $lookup: {
+            from: "books",
+            localField: "bookId",
+            foreignField: "_id",
+            as: "book",
+          },
+        },
+        {
+          $unwind: {
+            path: "$book",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $addFields: {
+            title: "$book.title",
+            image: "$book.image",
+            author: "$book.author",
+          },
+        },
+        {
+          $project: {
+            book: 0,
+          },
+        },
+        {
+          $sort: {
+            borrowDate: -1,
+          },
+        },
+      ])
+      .toArray();
+
+    res.json({
+      success: true,
+      borrows,
+    });
+  } catch (error) {
+    console.error("Error fetching borrowed books:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch borrowed books",
+    });
+  }
+});
+
+
 
 app.listen(PORT, () => {
   console.log(`BookNook server listening on port ${PORT}`);
