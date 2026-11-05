@@ -212,6 +212,105 @@ app.delete("/my-books/:id", async (req, res) => {
   res.send(result);
 });
 
+// ====================================
+// BORROW BOOK API
+// ====================================
+
+app.post("/borrows", async (req, res) => {
+  try {
+    const { bookId, userName, userEmail } = req.body;
+
+    if (
+      !ObjectId.isValid(bookId) ||
+      typeof userName !== "string" ||
+      !userName.trim() ||
+      typeof userEmail !== "string" ||
+      !userEmail.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid borrowing information",
+      });
+    }
+
+    const email = userEmail.trim().toLowerCase();
+    const bookObjectId = new ObjectId(bookId);
+
+    // Check whether the user already borrowed this book
+    const existingBorrow = await borrowsCollection.findOne({
+      bookId: bookObjectId,
+      userEmail: email,
+      status: "borrowed",
+    });
+
+    if (existingBorrow) {
+      return res.status(409).json({
+        success: false,
+        message: "You have already borrowed this book",
+      });
+    }
+
+    // Decrease copies only if at least one copy is available
+    const updateResult = await booksCollection.updateOne(
+      {
+        _id: bookObjectId,
+        totalCopies: { $gt: 0 },
+      },
+      {
+        $inc: { totalCopies: -1 },
+      },
+    );
+
+    if (updateResult.modifiedCount === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Book not found or no copies available",
+      });
+    }
+
+    // Borrow date and return date
+    const borrowDate = new Date();
+
+    const returnDate = new Date(borrowDate);
+    returnDate.setUTCDate(returnDate.getUTCDate() + 7);
+
+    const newBorrow = {
+      bookId: bookObjectId,
+      userName: userName.trim(),
+      userEmail: email,
+      borrowDate,
+      returnDate,
+      status: "borrowed",
+    };
+
+    // Save borrowing information
+    try {
+      const result = await borrowsCollection.insertOne(newBorrow);
+
+      res.status(201).json({
+        success: true,
+        message: "Book borrowed successfully",
+        insertedId: result.insertedId,
+      });
+    } catch (error) {
+      // Restore the copy if saving the borrow fails
+      await booksCollection.updateOne(
+        { _id: bookObjectId },
+        { $inc: { totalCopies: 1 } },
+      );
+
+      throw error;
+    }
+  } catch (error) {
+    console.error("Error borrowing book:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to borrow book",
+    });
+  }
+});
+
 
 
 app.listen(PORT, () => {
